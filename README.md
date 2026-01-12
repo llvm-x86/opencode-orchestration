@@ -47,14 +47,30 @@ pip install -r requirements.txt
 ```
 
 ### 4. Launching the Orchestrator
-Use the provided runner script. It handles everything:
+
+#### Option A: Quick Start (Tmux)
+To keep the bot running after you close your terminal, run it inside a tmux session:
 ```bash
+tmux new-session -s orchestrator
 ./run_bot.sh
+# Press Ctrl+B, then D to detach
 ```
-This script will:
-1.  Source the `.env`.
-2.  Start `telegram_agent.py`.
-3.  Ensure `opencode serve` (the API) is running or accessible.
+
+#### Option B: Production (Systemd)
+To make the bot run indefinitely, start on boot, and restart on crash:
+
+1.  Edit `opencode-orchestrator.service` and verify the paths (`WorkingDirectory`, `User`, `ExecStart`).
+2.  Install the service:
+    ```bash
+    sudo cp opencode-orchestrator.service /etc/systemd/system/
+    sudo systemctl daemon-reload
+    sudo systemctl enable opencode-orchestrator
+    sudo systemctl start opencode-orchestrator
+    ```
+3.  Check status:
+    ```bash
+    sudo systemctl status opencode-orchestrator
+    ```
 
 ### 5. Operation
 -   **Workspace**: All coding work should happen in `github_work_desk/` (automatically git-ignored).

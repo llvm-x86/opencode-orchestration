@@ -1,0 +1,18 @@
+[Unit]
+Description=Opencode Stateless Orchestrator
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/agent_programmer
+# Load environment variables from .env file
+EnvironmentFile=/root/agent_programmer/.env
+# Run the bot using the shell script to ensure venv is used
+ExecStart=/root/agent_programmer/run_bot.sh
+# Restart automatically if it crashes
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
