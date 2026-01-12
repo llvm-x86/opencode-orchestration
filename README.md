@@ -1,77 +1,72 @@
-# Stateless Agent Orchestrator
+# Stateless Agent Orchestrator (Opencode Exclusive)
 
-This project provides a Telegram-based interface for orchestrating "stateless" agentic coding sessions. It uses `tmux` to maintain persistent CLI sessions for agents (like `opencode`) while allowing the operator (you) to control them via a simple Telegram bot.
+This repository contains a specialized orchestration layer designed **exclusively for the [Opencode](https://github.com/opencode-ai/opencode) CLI agent**.
 
-## Features
+It enables a "Stateless Development" workflow where the AI agent operates in a persistent, headless `tmux` environment, while the human operator controls it remotely via a Telegram bot.
 
--   **Stateless Control**: The Python bot acts as a bridge. Restarting the bot or switching devices does not kill the underlying agent sessions.
--   **Telegram Interface**: Control your agents from anywhere using Telegram.
--   **API Integration**: Messages are routed directly to the `opencode` agent's REST API for immediate processing.
--   **Multi-Agent Support**: Spawn and switch between multiple named agent sessions.
--   **Security**: Restricted access to a specific Telegram User ID.
+## Core Concept: The Stateless Bridge
 
-## Prerequisites
+The system solves the problem of maintaining context and session state when the user switches devices or restarts their local machine.
 
--   Python 3.13+
--   `tmux`
--   `opencode` CLI tool installed and available in the path.
--   A Telegram Bot Token (from @BotFather).
+1.  **The Agent (`opencode`)**: Runs inside a `tmux` session. It is persistent. It has no direct UI; it "speaks" by executing a tool (`send_telegram.py`).
+2.  **The Bridge (`telegram_agent.py`)**: A lightweight Python process that:
+    *   Polls Telegram for user messages.
+    *   **Routes** messages directly into the agent's brain via the `opencode` REST API (`POST /session/:id/prompt_async`).
+    *   Does **not** execute code itself. It is a dumb pipe.
+3.  **The Loop**:
+    *   User sends "Refactor main.py" on Telegram.
+    *   Bridge injects prompt into Agent's session via API.
+    *   Agent wakes up, reads prompt, edits files, runs tests.
+    *   Agent runs `send_telegram.py "Done. Tests passed."` to reply.
 
-## Installation
+## 🚀 Setup Instructions (For Agents)
 
-1.  **Clone the repository:**
-    ```bash
-    git clone <repository-url>
-    cd <repository-directory>
-    ```
+If you are an AI agent instructed to set this up, follow these steps exactly to replicate the environment:
 
-2.  **Set up the environment:**
-    ```bash
-    python3 -m venv venv
-    source venv/bin/activate
-    pip install -r requirements.txt
-    ```
+### 1. Prerequisites
+-   **Opencode CLI**: Must be installed and accessible.
+-   **Tmux**: Must be installed.
+-   **Python 3.13+**: Required for the bridge script.
 
-3.  **Configure environment variables:**
-    Create a `.env` file in the root directory:
-    ```bash
-    TELEGRAM_TOKEN=your_telegram_bot_token_here
-    ```
+### 2. Environment Configuration
+Create a `.env` file in the root:
+```bash
+TELEGRAM_TOKEN=your_token_here
+```
+*Security Note*: Edit `telegram_agent.py` and set `ALLOWED_USER_ID` to the operator's Telegram ID.
 
-    *Note: You must also configure the `ALLOWED_USER_ID` in `telegram_agent.py` to match your Telegram ID for security.*
+### 3. Installation
+```bash
+# Clone this repo (if not already present)
+# git clone git@github.com:llvm-x86/opencode-orchestration.git
 
-## Usage
+# Setup Python environment
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
 
-1.  **Start the Orchestrator:**
-    ```bash
-    ./run_bot.sh
-    ```
-    This script will:
-    -   Activate the virtual environment.
-    -   Start the Telegram bot.
-    -   Ensure the `opencode` API server is reachable (started by the bot if needed, or assumed running).
+### 4. Launching the Orchestrator
+Use the provided runner script. It handles everything:
+```bash
+./run_bot.sh
+```
+This script will:
+1.  Source the `.env`.
+2.  Start `telegram_agent.py`.
+3.  Ensure `opencode serve` (the API) is running or accessible.
 
-2.  **Talk to your Agent:**
-    Open your bot in Telegram and send a message.
-    -   **Direct Messages**: Any text sent is forwarded to the active sub-agent session.
-    -   **Commands**:
-        -   `/start <name>`: Spawn or switch to a session named `<name>`.
-        -   `/list`: List active sessions.
-        -   `/screen`: View the current `tmux` pane content (screenshot).
-        -   `/stop <name>`: Kill a specific session.
+### 5. Operation
+-   **Workspace**: All coding work should happen in `github_work_desk/` (automatically git-ignored).
+-   **Communication**: The agent *must* use `send_telegram.py` to talk to the user. Standard output is invisible.
 
-## Architecture
+## Project Structure
 
--   **`telegram_agent.py`**: The main bot logic. It polls Telegram for updates and forwards prompts to the local `opencode` API.
--   **`opencode serve`**: Runs in the background (or in a tmux session) to provide the REST API that the bot talks to.
--   **`tmux`**: Hosts the actual agent CLI sessions (`opencode run`), keeping them alive independently of the bot process.
--   **`AGENTS.md`**: Instructions for the AI agents operating within this environment.
-
-## Development
-
--   **Logs**: Check `telegram_bot.log` for debugging bot issues.
--   **Work Desk**: Agents are instructed to clone work repositories into `github_work_desk/`.
+-   `telegram_agent.py`: The bridge logic. Manages `tmux` sessions and API forwarding.
+-   `AGENTS.md`: The "Constitution" for the sub-agent. It dictates behavior and protocols.
+-   `ab_test_api.py`: A self-verification script to ensure the API bridge is working.
+-   `send_telegram.py`: The "mouth" of the agent.
 
 ## License
 
-[License Name]
+MIT
