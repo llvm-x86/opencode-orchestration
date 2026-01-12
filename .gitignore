@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.pyc
+*.log
+.env
+last_chat_id.txt
+telegram_bot.log
+operator_chat.log
+log_pointer.txt
+telegram_debug.log
+github_work_desk/
