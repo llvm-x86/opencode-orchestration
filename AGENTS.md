@@ -19,25 +19,28 @@ The project uses a Python virtual environment and `tmux` for session management.
 ### Environment Setup
 - **Python Version**: 3.13+
 - **Virtual Environment**: Located in `./venv/`
-- **Dependencies**: Managed via `pip`. Main dependency is `python-telegram-bot`.
+- **Dependencies**: Managed via `pip`. Main dependencies: `python-telegram-bot`, `httpx`.
+- **Initialization**: `pip install -r requirements.txt`
 
 ### Running the Application
 To start the Telegram bot, ensure the `TELEGRAM_TOKEN` environment variable is set and execute the runner script:
 ```bash
-export TELEGRAM_TOKEN='your_token_here'
 ./run_bot.sh
 ```
+*(Note: `run_bot.sh` loads variables from `.env` if present.)*
 
-### Linting
-The project uses `ruff` for linting and formatting.
+### Linting & Formatting
+The project uses `ruff` for both linting and formatting.
 - **Check Linting**: `ruff check .`
 - **Auto-fix Linting**: `ruff check --fix .`
 - **Format Code**: `ruff format .`
 
 ### Testing
-*Note: Currently, no formal testing framework is configured. It is highly recommended to add `pytest` for unit testing handlers.*
-- **Proposed Test Command**: `./venv/bin/pytest`
-- **Run Single Test**: `./venv/bin/pytest tests/test_file.py::test_name`
+- **End-to-End Integration Test**: `python3 ab_test_api.py`
+  - This script verifies the bridge between the Telegram bot and the agent API.
+- **Unit Testing**: Currently, no formal unit testing framework is configured. Use `pytest` for new tests.
+  - **Proposed Test Command**: `./venv/bin/pytest`
+  - **Run Single Test**: `./venv/bin/pytest tests/test_file.py::test_name`
 
 ---
 
@@ -56,7 +59,7 @@ All contributions should follow these conventions to maintain consistency.
 ### Imports
 Group imports in the following order:
 1. Standard library imports (e.g., `os`, `subprocess`, `logging`).
-2. Third-party library imports (e.g., `telegram`).
+2. Third-party library imports (e.g., `telegram`, `httpx`).
 3. Local application/library imports.
 
 Example:
@@ -76,9 +79,9 @@ async def my_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 ```
 
 ### Error Handling
-- Use `try...except` blocks when performing system operations like `subprocess.run`.
-- Always verify the existence of `update.effective_message` before attempting to reply.
-- Provide descriptive error messages to the user via Telegram.
+- Use `try...except` blocks when performing system operations like `subprocess.run` or network calls via `httpx`.
+- Always verify the existence of `update.effective_message` and `update.effective_user` before attempting to reply or access user data.
+- Provide descriptive error messages to the user via Telegram when operations fail.
 
 ### Tmux Integration
 - Use `run_tmux(cmd)` utility function for all `tmux` interactions.
@@ -87,7 +90,7 @@ async def my_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 ### Logging
 - Use the standard `logging` module.
-- Log level should be set to `INFO` by default.
+- Log level should be set to `DEBUG` for file logging (`telegram_bot.log`) and `INFO` for console.
 - Include timestamps and log levels in the format.
 
 ---
@@ -96,7 +99,11 @@ async def my_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 - `telegram_agent.py`: Main entry point containing bot handlers and orchestrator logic.
 - `run_bot.sh`: Shell script to activate venv and launch the bot.
-- `venv/`: Local Python virtual environment.
+- `send_telegram.py`: CLI utility for agents to send messages back to the user.
+- `check_messages.py`: CLI utility to fetch new messages from `operator_chat.log`.
+- `ab_test_api.py`: Integration test for the API bridge.
+- `last_chat_id.txt`: Persists the last active Telegram chat ID.
+- `log_pointer.txt`: Tracks the read position in `operator_chat.log`.
 
 ---
 
@@ -107,8 +114,8 @@ When an agentic session starts (e.g., via `opencode serve` or `opencode run`), i
 ### Mandatory Startup Checklist for Agents
 1.  **Read Context**: Immediately read `operator_chat.log` to see the latest user instructions.
 2.  **Stateless Loop**:
-    *   **Check**: Use `python3 check_messages.py` to identify new user prompts since the last action.
-    *   **Act**: Execute the requested coding task (fixing bugs, building features, etc.).
+    *   **Check**: Use `python3 check_messages.py` to identify new user prompts. This script uses `log_pointer.txt` to avoid duplicate processing.
+    *   **Act**: Execute the requested coding task.
     *   **Reply**: Once a task is done or if clarification is needed, use `./venv/bin/python send_telegram.py "Your response"` to update the user.
 3.  **Tmux Persistence**: Never kill the main `tmux` sessions unless explicitly asked. The user may "tab over" to check your work manually.
 
@@ -127,19 +134,17 @@ When an agentic session starts (e.g., via `opencode serve` or `opencode run`), i
 ### Multi-Agent Orchestration
 If you are the "main" orchestrator:
 - You can spawn sub-agents using `tmux new-session -d -s <name> opencode`.
+- Control sub-agents by injecting instructions via `tmux send-keys -t <name> "Your instruction" Enter`.
 - Monitor their progress using `tmux capture-pane -pt <name>`.
 - You are responsible for aggregating their results and reporting back to the user on Telegram.
 
 ---
 
----
-
 ## 5. Cursor & Copilot Rules
-
-*No specific `.cursorrules` or `.github/copilot-instructions.md` were found. If added, they should be integrated here.*
 
 - **Rule 1**: Prefer `subprocess.Popen` for long-running processes (like spawning the agent) to avoid blocking the bot's event loop.
 - **Rule 2**: Use `Markdown` or `MarkdownV2` for Telegram messages containing code blocks or terminal output.
+- **Rule 3**: When calling the `opencode` API, always verify session existence first and sort by activity if multiple sessions exist.
 
 ---
 *End of AGENTS.md*

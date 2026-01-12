@@ -108,9 +108,47 @@ async def stop_session(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(f"🛑 Killed session: {session}")
 
 
-async def forward_to_api(text: str):
-    """Forwards the message to the opencode REST API."""
+def send_to_tmux_session(session_name: str, text: str) -> bool:
+    """Sends text to a tmux session using send-keys."""
+    try:
+        # Escape double quotes in the text for shell safety
+        escaped_text = text.replace('"', '\\"')
+        result = subprocess.run(
+            ["tmux", "send-keys", "-t", session_name, escaped_text, "Enter"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            logging.info(f"Sent to tmux session '{session_name}': {text[:50]}...")
+            return True
+        else:
+            logging.error(f"tmux send-keys failed: {result.stderr}")
+            return False
+    except Exception as e:
+        logging.error(f"tmux send-keys exception: {e}")
+        return False
+
+
+async def forward_to_agent(text: str, tmux_session: str = "default_agent") -> bool:
+    """Forwards the message to an agent via tmux send-keys (primary) or API (fallback)."""
     logging.debug(f"Attempting to forward text: {text}")
+
+    # Primary method: Use tmux send-keys to inject directly into the agent session
+    sessions_output = subprocess.run(
+        ["tmux", "list-sessions", "-F", "#S"], capture_output=True, text=True
+    )
+    active_tmux_sessions = sessions_output.stdout.strip().split("\n")
+
+    # Append system instruction to ensure the agent uses the response tool
+    system_instruction = " (IMPORTANT: Do not print your response. You MUST use the tool: ./venv/bin/python send_telegram.py 'your response')"
+    full_text = text + system_instruction
+
+    if tmux_session in active_tmux_sessions:
+        if send_to_tmux_session(tmux_session, full_text):
+            return True
+        logging.warning(f"tmux send-keys failed, falling back to API...")
+
+    # Fallback: Use the opencode REST API
     async with httpx.AsyncClient() as client:
         try:
             sessions_resp = await client.get("http://localhost:4096/session")
@@ -163,7 +201,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     with open("operator_chat.log", "a") as f:
         f.write(f"USER: {text}\n")
 
-    success = await forward_to_api(text)
+    # Get the user's active tmux session or default to "default_agent"
+    tmux_session = user_active_session.get(user_id, "default_agent")
+    success = await forward_to_agent(text, tmux_session)
 
     if success:
         await update.effective_message.reply_text("Instruction queued to agent.")

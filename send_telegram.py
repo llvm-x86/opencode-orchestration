@@ -1,13 +1,20 @@
 import os
 import sys
+import httpx
 import asyncio
-from telegram import Bot
 
 
 async def send_message(text):
     token = os.environ.get("TELEGRAM_TOKEN")
-    # We need a way to know the chat_id.
-    # For a personal bot, we can store the last chat_id in a file.
+
+    # Try loading from .env if not found
+    if not token and os.path.exists(".env"):
+        with open(".env", "r") as f:
+            for line in f:
+                if line.startswith("TELEGRAM_TOKEN="):
+                    token = line.strip().split("=", 1)[1].strip("'\"")
+                    break
+
     if not token:
         print("TELEGRAM_TOKEN not set")
         return
@@ -20,9 +27,18 @@ async def send_message(text):
     with open(chat_id_file, "r") as f:
         chat_id = f.read().strip()
 
-    bot = Bot(token)
-    async with bot:
-        await bot.send_message(chat_id=chat_id, text=text)
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = {"chat_id": chat_id, "text": text}
+
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.post(url, json=payload, timeout=10.0)
+            if resp.status_code == 200:
+                print("Sent successfully.")
+            else:
+                print(f"Failed to send: {resp.status_code} - {resp.text}")
+        except Exception as e:
+            print(f"Exception sending message: {e}")
 
 
 if __name__ == "__main__":

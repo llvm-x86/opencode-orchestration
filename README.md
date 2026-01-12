@@ -11,11 +11,11 @@ The system solves the problem of maintaining context and session state when the 
 1.  **The Agent (`opencode`)**: Runs inside a `tmux` session. It is persistent. It has no direct UI; it "speaks" by executing a tool (`send_telegram.py`).
 2.  **The Bridge (`telegram_agent.py`)**: A lightweight Python process that:
     *   Polls Telegram for user messages.
-    *   **Routes** messages directly into the agent's brain via the `opencode` REST API (`POST /session/:id/prompt_async`).
+    *   **Routes** messages directly into the agent's brain via `tmux send-keys` (primary) or the `opencode` REST API (fallback).
     *   Does **not** execute code itself. It is a dumb pipe.
 3.  **The Loop**:
     *   User sends "Refactor main.py" on Telegram.
-    *   Bridge injects prompt into Agent's session via API.
+    *   Bridge injects prompt into Agent's session.
     *   Agent wakes up, reads prompt, edits files, runs tests.
     *   Agent runs `send_telegram.py "Done. Tests passed."` to reply.
 
