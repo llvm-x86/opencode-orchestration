@@ -2,6 +2,7 @@ import os
 import subprocess
 import logging
 import httpx
+import time
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -154,20 +155,27 @@ async def get_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # If relative, look in github_work_desk
     if not os.path.isabs(path):
         path = os.path.join("github_work_desk", path)
-    
+
     abs_path = os.path.abspath(path)
-    
+
     if not os.path.exists(abs_path):
-        await update.effective_message.reply_text(f"❌ File not found: `{abs_path}`", parse_mode="Markdown")
+        await update.effective_message.reply_text(
+            f"❌ File not found: `{abs_path}`", parse_mode="Markdown"
+        )
         return
-    
+
     if os.path.isdir(abs_path):
-        await update.effective_message.reply_text(f"📁 `{abs_path}` is a directory. Please specify a file.", parse_mode="Markdown")
+        await update.effective_message.reply_text(
+            f"📁 `{abs_path}` is a directory. Please specify a file.",
+            parse_mode="Markdown",
+        )
         return
 
     try:
         with open(abs_path, "rb") as f:
-            await update.effective_message.reply_document(document=f, filename=os.path.basename(abs_path))
+            await update.effective_message.reply_document(
+                document=f, filename=os.path.basename(abs_path)
+            )
     except Exception as e:
         logging.error(f"Error sending file: {e}")
         await update.effective_message.reply_text(f"❌ Error: {str(e)}")
@@ -200,17 +208,19 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file = await context.bot.get_file(file_id)
         os.makedirs("github_work_desk", exist_ok=True)
         dest_path = os.path.abspath(os.path.join("github_work_desk", file_name))
-        
+
         await file.download_to_drive(dest_path)
-        
+
         logging.info(f"File saved: {dest_path}")
-        await update.effective_message.reply_text(f"📥 File saved to: `{dest_path}`", parse_mode="Markdown")
-        
+        await update.effective_message.reply_text(
+            f"📥 File saved to: `{dest_path}`", parse_mode="Markdown"
+        )
+
         # Notify the agent
         tmux_session = user_active_session.get(user_id, "default_agent")
         forward_msg = f"System: A new file has been uploaded to {dest_path}"
         await forward_to_agent(forward_msg, tmux_session)
-        
+
     except Exception as e:
         logging.error(f"Error handling file: {e}")
         await update.effective_message.reply_text(f"❌ Error saving file: {str(e)}")
@@ -220,19 +230,32 @@ def send_to_tmux_session(session_name: str, text: str) -> bool:
     """Sends text to a tmux session using send-keys."""
     try:
         # Escape double quotes and backslashes for shell safety
-        escaped_text = text.replace('\\', '\\\\').replace('"', '\\"')
-        cmd = ["tmux", "send-keys", "-t", session_name, escaped_text, "Enter"]
-        logging.info(f"Running command: {' '.join(cmd)}")
+        escaped_text = text.replace("\\", "\\\\").replace('"', '\\"')
+
+        # Send text first
+        cmd_text = ["tmux", "send-keys", "-t", session_name, escaped_text]
+        logging.info(f"Running command: {' '.join(cmd_text)}")
+        subprocess.run(cmd_text, check=True)
+
+        # Small delay to ensure text is processed by TUI
+        time.sleep(0.5)
+
+        # Send Enter
+        cmd_enter = ["tmux", "send-keys", "-t", session_name, "Enter"]
+        logging.info(f"Running command: {' '.join(cmd_enter)}")
         result = subprocess.run(
-            cmd,
+            cmd_enter,
             capture_output=True,
             text=True,
         )
+
         if result.returncode == 0:
             logging.info(f"Sent to tmux session '{session_name}': {text[:50]}...")
             return True
         else:
-            logging.error(f"tmux send-keys failed (code {result.returncode}): {result.stderr}")
+            logging.error(
+                f"tmux send-keys failed (code {result.returncode}): {result.stderr}"
+            )
             return False
     except Exception as e:
         logging.error(f"tmux send-keys exception: {e}")
@@ -352,6 +375,7 @@ def ensure_session(name: str = "default_agent"):
         subprocess.Popen(
             ["tmux", "new-session", "-d", "-s", name, "/root/.opencode/bin/opencode"]
         )
+        time.sleep(5)  # Wait for agent to boot
         return True
     return False
 
