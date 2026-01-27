@@ -117,6 +117,7 @@ When an agentic session starts (e.g., via `opencode serve` or `opencode run`), i
     *   **Check**: Use `python3 check_messages.py` to identify new user prompts. This script uses `log_pointer.txt` to avoid duplicate processing.
     *   **Act**: Execute the requested coding task.
     *   **Reply**: Once a task is done or if clarification is needed, use `./venv/bin/python send_telegram.py "Your response"` to update the user.
+    *   **Send File**: If you need to send a file (logs, artifacts, etc.), use `./venv/bin/python send_file_telegram.py <path> [caption]`.
 3.  **Tmux Persistence**: Never kill the main `tmux` sessions unless explicitly asked. The user may "tab over" to check your work manually.
 
 ### Communication Protocol (CRITICAL)

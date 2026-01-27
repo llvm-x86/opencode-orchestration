@@ -108,13 +108,123 @@ async def stop_session(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(f"🛑 Killed session: {session}")
 
 
+async def send_key(update: Update, context: ContextTypes.DEFAULT_TYPE, key: str):
+    if not update.effective_message or not update.effective_user:
+        return
+    session = user_active_session.get(update.effective_user.id, "default_agent")
+    ensure_session(session)
+    result = run_tmux(["send-keys", "-t", session, key])
+    if "Error" in result:
+        await update.effective_message.reply_text(f"❌ Failed to send {key}: {result}")
+    else:
+        await update.effective_message.reply_text(f"⌨️ Sent {key} to {session}")
+
+
+async def enter_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await send_key(update, context, "Enter")
+
+
+async def up_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await send_key(update, context, "Up")
+
+
+async def down_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await send_key(update, context, "Down")
+
+
+async def left_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await send_key(update, context, "Left")
+
+
+async def right_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await send_key(update, context, "Right")
+
+
+async def get_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.effective_message or not update.effective_user:
+        return
+    if update.effective_user.id != ALLOWED_USER_ID:
+        await update.effective_message.reply_text("⛔ Unauthorized.")
+        return
+    if not context.args:
+        await update.effective_message.reply_text("Usage: /get <path>")
+        return
+
+    path = context.args[0]
+    # If relative, look in github_work_desk
+    if not os.path.isabs(path):
+        path = os.path.join("github_work_desk", path)
+    
+    abs_path = os.path.abspath(path)
+    
+    if not os.path.exists(abs_path):
+        await update.effective_message.reply_text(f"❌ File not found: `{abs_path}`", parse_mode="Markdown")
+        return
+    
+    if os.path.isdir(abs_path):
+        await update.effective_message.reply_text(f"📁 `{abs_path}` is a directory. Please specify a file.", parse_mode="Markdown")
+        return
+
+    try:
+        with open(abs_path, "rb") as f:
+            await update.effective_message.reply_document(document=f, filename=os.path.basename(abs_path))
+    except Exception as e:
+        logging.error(f"Error sending file: {e}")
+        await update.effective_message.reply_text(f"❌ Error: {str(e)}")
+
+
+async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.effective_message or not update.effective_user:
+        return
+
+    user_id = update.effective_user.id
+    if user_id != ALLOWED_USER_ID:
+        logging.warning(f"Unauthorized file upload attempt from user ID: {user_id}")
+        await update.effective_message.reply_text("⛔ Unauthorized.")
+        return
+
+    # Determine file info
+    if update.message.document:
+        doc = update.message.document
+        file_name = doc.file_name or f"file_{update.message.message_id}"
+        file_id = doc.file_id
+    elif update.message.photo:
+        doc = update.message.photo[-1]  # Highest resolution
+        file_name = f"photo_{update.message.message_id}.jpg"
+        file_id = doc.file_id
+    else:
+        await update.effective_message.reply_text("❓ Unsupported file type.")
+        return
+
+    try:
+        file = await context.bot.get_file(file_id)
+        os.makedirs("github_work_desk", exist_ok=True)
+        dest_path = os.path.abspath(os.path.join("github_work_desk", file_name))
+        
+        await file.download_to_drive(dest_path)
+        
+        logging.info(f"File saved: {dest_path}")
+        await update.effective_message.reply_text(f"📥 File saved to: `{dest_path}`", parse_mode="Markdown")
+        
+        # Notify the agent
+        tmux_session = user_active_session.get(user_id, "default_agent")
+        forward_msg = f"System: A new file has been uploaded to {dest_path}"
+        await forward_to_agent(forward_msg, tmux_session)
+        
+    except Exception as e:
+        logging.error(f"Error handling file: {e}")
+        await update.effective_message.reply_text(f"❌ Error saving file: {str(e)}")
+
+
 def send_to_tmux_session(session_name: str, text: str) -> bool:
     """Sends text to a tmux session using send-keys."""
     try:
-        # Escape double quotes in the text for shell safety
-        escaped_text = text.replace('"', '\\"')
+        # Escape double quotes and backslashes for shell safety
+        escaped_text = text.replace('\\', '\\\\').replace('"', '\\"')
+        cmd = ["tmux", "send-keys", "-t", session_name, escaped_text, "Enter"]
+        logging.info(f"Running command: {' '.join(cmd)}")
         result = subprocess.run(
-            ["tmux", "send-keys", "-t", session_name, escaped_text, "Enter"],
+            cmd,
             capture_output=True,
             text=True,
         )
@@ -122,7 +232,7 @@ def send_to_tmux_session(session_name: str, text: str) -> bool:
             logging.info(f"Sent to tmux session '{session_name}': {text[:50]}...")
             return True
         else:
-            logging.error(f"tmux send-keys failed: {result.stderr}")
+            logging.error(f"tmux send-keys failed (code {result.returncode}): {result.stderr}")
             return False
     except Exception as e:
         logging.error(f"tmux send-keys exception: {e}")
@@ -132,6 +242,9 @@ def send_to_tmux_session(session_name: str, text: str) -> bool:
 async def forward_to_agent(text: str, tmux_session: str = "default_agent") -> bool:
     """Forwards the message to an agent via tmux send-keys (primary) or API (fallback)."""
     logging.debug(f"Attempting to forward text: {text}")
+
+    # Ensure the session exists before trying to forward
+    ensure_session(tmux_session)
 
     # Primary method: Use tmux send-keys to inject directly into the agent session
     sessions_output = subprocess.run(
@@ -222,9 +335,25 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/switch <name> - Switch active control\n"
         "/screen - View agent state\n"
         "/stop <name> - Kill an agent\n"
-        "Just type to send keys to the active agent."
+        "/enter - Send Enter key\n"
+        "/up, /down, /left, /right - Send arrow keys\n"
+        "/get <path> - Download a file\n"
+        "Just type to send keys to the active agent.\n"
+        "Send a file or photo to save it to the workspace."
     )
     await update.effective_message.reply_text(text)
+
+
+def ensure_session(name: str = "default_agent"):
+    """Ensures a tmux session with the given name is running."""
+    sessions = run_tmux(["list-sessions"])
+    if name not in sessions:
+        logging.info(f"Auto-spawning session: {name}")
+        subprocess.Popen(
+            ["tmux", "new-session", "-d", "-s", name, "/root/.opencode/bin/opencode"]
+        )
+        return True
+    return False
 
 
 if __name__ == "__main__":
@@ -233,6 +362,9 @@ if __name__ == "__main__":
         print("Set TELEGRAM_TOKEN")
         exit(1)
 
+    # Ensure the default agent is running on startup
+    ensure_session("default_agent")
+
     app = ApplicationBuilder().token(token).build()
 
     app.add_handler(CommandHandler("start", start_session))
@@ -240,7 +372,14 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("switch", switch_session))
     app.add_handler(CommandHandler("screen", screen))
     app.add_handler(CommandHandler("stop", stop_session))
+    app.add_handler(CommandHandler("get", get_cmd))
+    app.add_handler(CommandHandler("enter", enter_cmd))
+    app.add_handler(CommandHandler("up", up_cmd))
+    app.add_handler(CommandHandler("down", down_cmd))
+    app.add_handler(CommandHandler("left", left_cmd))
+    app.add_handler(CommandHandler("right", right_cmd))
     app.add_handler(CommandHandler("help", help_cmd))
+    app.add_handler(MessageHandler(filters.Document.ALL | filters.PHOTO, handle_file))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
 
     print("Orchestrator Online...")
