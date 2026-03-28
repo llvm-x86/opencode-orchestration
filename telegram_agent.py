@@ -3,6 +3,7 @@ import subprocess
 import logging
 import httpx
 import time
+import json
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -25,6 +26,8 @@ logging.getLogger("").addHandler(console)
 
 SESSION_NAME = "agent_session"
 ALLOWED_USER_ID = 6715827541  # Your ID
+DEFAULT_MODEL = os.environ.get("OPENCODE_MODEL", "openai/gpt-5.4")
+DEFAULT_YOLO = os.environ.get("OPENCODE_YOLO", "").lower() in {"1", "true", "yes", "on"}
 user_active_session = {}
 
 
@@ -34,6 +37,77 @@ def run_tmux(cmd):
         return result.stdout.strip()
     except Exception as e:
         return f"Error: {str(e)}"
+
+
+def opencode_command(
+    continue_last: bool = False, session_id: str | None = None, fork: bool = False
+) -> list[str]:
+    command = ["/root/.opencode/bin/opencode", "--model", DEFAULT_MODEL]
+    if session_id:
+        command.extend(["--session", session_id])
+    elif continue_last:
+        command.append("--continue")
+    if fork and (continue_last or session_id):
+        command.append("--fork")
+    return command
+
+
+def opencode_environment(yolo: bool = False) -> dict[str, str]:
+    env = os.environ.copy()
+    if not yolo:
+        return env
+
+    config: dict[str, str] = {}
+    existing = env.get("OPENCODE_CONFIG_CONTENT")
+    if existing:
+        try:
+            parsed = json.loads(existing)
+            if isinstance(parsed, dict):
+                config.update(parsed)
+        except json.JSONDecodeError:
+            logging.warning("Ignoring invalid OPENCODE_CONFIG_CONTENT while enabling yolo mode.")
+
+    config["permission"] = "allow"
+    env["OPENCODE_CONFIG_CONTENT"] = json.dumps(config)
+    return env
+
+
+def list_opencode_sessions() -> str:
+    try:
+        result = subprocess.run(
+            ["/root/.opencode/bin/opencode", "session", "list"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return result.stdout.strip()
+    except subprocess.CalledProcessError as e:
+        logging.error(f"Failed to list opencode sessions: {e.stderr}")
+        return ""
+
+
+def spawn_agent_session(
+    name: str,
+    continue_last: bool = False,
+    opencode_session_id: str | None = None,
+    fork: bool = False,
+    yolo: bool = False,
+) -> None:
+    subprocess.Popen(
+        [
+            "tmux",
+            "new-session",
+            "-d",
+            "-s",
+            name,
+            *opencode_command(
+                continue_last=continue_last,
+                session_id=opencode_session_id,
+                fork=fork,
+            ),
+        ],
+        env=opencode_environment(yolo=yolo),
+    )
 
 
 async def start_session(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -49,12 +123,162 @@ async def start_session(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if name in sessions:
         await update.effective_message.reply_text(f"Session '{name}' already exists.")
     else:
-        subprocess.Popen(
-            ["tmux", "new-session", "-d", "-s", name, "/root/.opencode/bin/opencode"]
-        )
+        spawn_agent_session(name, yolo=DEFAULT_YOLO)
         await update.effective_message.reply_text(f"🚀 Spawned agent session: {name}")
     user_active_session[update.effective_user.id] = name
     await update.effective_message.reply_text(f"Switched to: {name}")
+
+
+async def start_session_yolo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.effective_message or not update.effective_user:
+        return
+
+    if update.effective_user.id != ALLOWED_USER_ID:
+        await update.effective_message.reply_text("⛔ Unauthorized.")
+        return
+
+    name = context.args[0] if context.args else "default_agent"
+    sessions = run_tmux(["list-sessions"])
+    if name in sessions:
+        await update.effective_message.reply_text(f"Session '{name}' already exists.")
+    else:
+        spawn_agent_session(name, yolo=True)
+        await update.effective_message.reply_text(
+            f"🚀 Spawned yolo agent session: {name}"
+        )
+    user_active_session[update.effective_user.id] = name
+    await update.effective_message.reply_text(f"Switched to: {name}")
+
+
+async def session_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.effective_message or not update.effective_user:
+        return
+    if update.effective_user.id != ALLOWED_USER_ID:
+        await update.effective_message.reply_text("⛔ Unauthorized.")
+        return
+
+    sessions = list_opencode_sessions()
+    if not sessions:
+        await update.effective_message.reply_text("No resumable opencode sessions found.")
+        return
+
+    if len(sessions) > 3500:
+        sessions = sessions[:3500] + "\n..."
+    await update.effective_message.reply_text(
+        f"Opencode Sessions:\n```\n{sessions}\n```", parse_mode="Markdown"
+    )
+
+
+async def resume_session(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.effective_message or not update.effective_user:
+        return
+    if update.effective_user.id != ALLOWED_USER_ID:
+        await update.effective_message.reply_text("⛔ Unauthorized.")
+        return
+
+    if not context.args:
+        await update.effective_message.reply_text(
+            "Usage: /resume <opencode_session_id> [tmux_name]\n"
+            "Use /history to see resumable session IDs."
+        )
+        return
+
+    opencode_session_id = context.args[0]
+    tmux_name = context.args[1] if len(context.args) > 1 else "default_agent"
+    sessions = run_tmux(["list-sessions", "-F", "#S"])
+    if tmux_name in sessions.splitlines():
+        await update.effective_message.reply_text(
+            f"Session '{tmux_name}' already exists. Use /switch {tmux_name} or /stop {tmux_name} first."
+        )
+        return
+
+    spawn_agent_session(
+        tmux_name,
+        opencode_session_id=opencode_session_id,
+        yolo=DEFAULT_YOLO,
+    )
+    user_active_session[update.effective_user.id] = tmux_name
+    await update.effective_message.reply_text(
+        f"🔄 Resumed opencode session `{opencode_session_id}` in tmux session `{tmux_name}`.",
+        parse_mode="Markdown",
+    )
+
+
+async def resume_last_session(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.effective_message or not update.effective_user:
+        return
+    if update.effective_user.id != ALLOWED_USER_ID:
+        await update.effective_message.reply_text("⛔ Unauthorized.")
+        return
+
+    tmux_name = context.args[0] if context.args else "default_agent"
+    sessions = run_tmux(["list-sessions", "-F", "#S"])
+    if tmux_name in sessions.splitlines():
+        await update.effective_message.reply_text(
+            f"Session '{tmux_name}' already exists. Use /switch {tmux_name} or /stop {tmux_name} first."
+        )
+        return
+
+    spawn_agent_session(tmux_name, continue_last=True, yolo=DEFAULT_YOLO)
+    user_active_session[update.effective_user.id] = tmux_name
+    await update.effective_message.reply_text(
+        f"🔄 Resumed the latest opencode chat in tmux session `{tmux_name}`.",
+        parse_mode="Markdown",
+    )
+
+
+async def resume_session_yolo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.effective_message or not update.effective_user:
+        return
+    if update.effective_user.id != ALLOWED_USER_ID:
+        await update.effective_message.reply_text("⛔ Unauthorized.")
+        return
+
+    if not context.args:
+        await update.effective_message.reply_text(
+            "Usage: /resume_yolo <opencode_session_id> [tmux_name]\n"
+            "Use /history to see resumable session IDs."
+        )
+        return
+
+    opencode_session_id = context.args[0]
+    tmux_name = context.args[1] if len(context.args) > 1 else "default_agent"
+    sessions = run_tmux(["list-sessions", "-F", "#S"])
+    if tmux_name in sessions.splitlines():
+        await update.effective_message.reply_text(
+            f"Session '{tmux_name}' already exists. Use /switch {tmux_name} or /stop {tmux_name} first."
+        )
+        return
+
+    spawn_agent_session(tmux_name, opencode_session_id=opencode_session_id, yolo=True)
+    user_active_session[update.effective_user.id] = tmux_name
+    await update.effective_message.reply_text(
+        f"🔄 Resumed opencode session `{opencode_session_id}` in yolo mode as tmux session `{tmux_name}`.",
+        parse_mode="Markdown",
+    )
+
+
+async def resume_last_session_yolo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.effective_message or not update.effective_user:
+        return
+    if update.effective_user.id != ALLOWED_USER_ID:
+        await update.effective_message.reply_text("⛔ Unauthorized.")
+        return
+
+    tmux_name = context.args[0] if context.args else "default_agent"
+    sessions = run_tmux(["list-sessions", "-F", "#S"])
+    if tmux_name in sessions.splitlines():
+        await update.effective_message.reply_text(
+            f"Session '{tmux_name}' already exists. Use /switch {tmux_name} or /stop {tmux_name} first."
+        )
+        return
+
+    spawn_agent_session(tmux_name, continue_last=True, yolo=True)
+    user_active_session[update.effective_user.id] = tmux_name
+    await update.effective_message.reply_text(
+        f"🔄 Resumed the latest opencode chat in yolo mode as tmux session `{tmux_name}`.",
+        parse_mode="Markdown",
+    )
 
 
 async def list_sessions(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -139,6 +363,21 @@ async def left_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def right_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_key(update, context, "Right")
+
+
+async def esc_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await send_key(update, context, "Escape")
+
+
+async def compact_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.effective_message or not update.effective_user:
+        return
+    session = user_active_session.get(update.effective_user.id, "default_agent")
+    ensure_session(session)
+    if send_to_tmux_session(session, "/compact"):
+        await update.effective_message.reply_text(f"🗜️ Sent /compact to {session}")
+    else:
+        await update.effective_message.reply_text(f"❌ Failed to send /compact to {session}")
 
 
 async def get_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -354,12 +593,20 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     text = (
         "/start <name> - Spawn/attach to agent\n"
+        "/start_yolo [name] - Spawn an agent in approve-all/yolo mode\n"
+        "/history - List resumable opencode chats\n"
+        "/resume <opencode_session_id> [name] - Resume a specific opencode chat\n"
+        "/resume_yolo <opencode_session_id> [name] - Resume a specific chat in yolo mode\n"
+        "/resume_last [name] - Resume the most recent opencode chat\n"
+        "/resume_last_yolo [name] - Resume the latest chat in yolo mode\n"
         "/list - List all agents\n"
         "/switch <name> - Switch active control\n"
         "/screen - View agent state\n"
         "/stop <name> - Kill an agent\n"
         "/enter - Send Enter key\n"
         "/up, /down, /left, /right - Send arrow keys\n"
+        "/esc - Send Escape key\n"
+        "/compact - Run the native opencode /compact command\n"
         "/get <path> - Download a file\n"
         "Just type to send keys to the active agent.\n"
         "Send a file or photo to save it to the workspace."
@@ -372,9 +619,7 @@ def ensure_session(name: str = "default_agent"):
     sessions = run_tmux(["list-sessions"])
     if name not in sessions:
         logging.info(f"Auto-spawning session: {name}")
-        subprocess.Popen(
-            ["tmux", "new-session", "-d", "-s", name, "/root/.opencode/bin/opencode"]
-        )
+        spawn_agent_session(name, yolo=DEFAULT_YOLO)
         time.sleep(5)  # Wait for agent to boot
         return True
     return False
@@ -392,6 +637,12 @@ if __name__ == "__main__":
     app = ApplicationBuilder().token(token).build()
 
     app.add_handler(CommandHandler("start", start_session))
+    app.add_handler(CommandHandler("start_yolo", start_session_yolo))
+    app.add_handler(CommandHandler("history", session_history))
+    app.add_handler(CommandHandler("resume", resume_session))
+    app.add_handler(CommandHandler("resume_yolo", resume_session_yolo))
+    app.add_handler(CommandHandler("resume_last", resume_last_session))
+    app.add_handler(CommandHandler("resume_last_yolo", resume_last_session_yolo))
     app.add_handler(CommandHandler("list", list_sessions))
     app.add_handler(CommandHandler("switch", switch_session))
     app.add_handler(CommandHandler("screen", screen))
@@ -402,6 +653,8 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("down", down_cmd))
     app.add_handler(CommandHandler("left", left_cmd))
     app.add_handler(CommandHandler("right", right_cmd))
+    app.add_handler(CommandHandler("esc", esc_cmd))
+    app.add_handler(CommandHandler("compact", compact_cmd))
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(MessageHandler(filters.Document.ALL | filters.PHOTO, handle_file))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))

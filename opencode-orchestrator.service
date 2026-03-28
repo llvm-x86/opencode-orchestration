@@ -5,11 +5,11 @@ After=network.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/root/agent_programmer
+WorkingDirectory=/root/opencode-orchestration
 # Load environment variables from .env file
-EnvironmentFile=/root/agent_programmer/.env
+EnvironmentFile=/root/opencode-orchestration/.env
 # Run the bot using the shell script to ensure venv is used
-ExecStart=/root/agent_programmer/run_bot.sh
+ExecStart=/root/opencode-orchestration/run_bot.sh
 # Restart automatically if it crashes
 Restart=always
 RestartSec=5

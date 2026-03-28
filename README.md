@@ -32,8 +32,13 @@ If you are an AI agent instructed to set this up, follow these steps exactly to 
 Create a `.env` file in the root:
 ```bash
 TELEGRAM_TOKEN=your_token_here
+OPENCODE_MODEL=openai/gpt-5.4
+OPENCODE_YOLO=false
 ```
 *Security Note*: Edit `telegram_agent.py` and set `ALLOWED_USER_ID` to the operator's Telegram ID.
+
+If `OPENCODE_MODEL` is omitted, the orchestrator defaults to `openai/gpt-5.4`.
+If `OPENCODE_YOLO=true`, newly auto-spawned sessions default to approve-all mode.
 
 ### 3. Installation
 ```bash
@@ -75,6 +80,8 @@ To make the bot run indefinitely, start on boot, and restart on crash:
 ### 5. Operation
 -   **Workspace**: All coding work should happen in `github_work_desk/` (automatically git-ignored).
 -   **Communication**: The agent *must* use `send_telegram.py` to talk to the user. Standard output is invisible.
+-   **Resuming chats**: Use `/history` to list prior `opencode` session IDs, `/resume <session_id> [tmux_name]` to reopen a specific chat, or `/resume_last [tmux_name]` to continue the most recent chat in a new tmux session.
+-   **Approve-all mode**: Use `/start_yolo`, `/resume_yolo <session_id> [tmux_name]`, or `/resume_last_yolo [tmux_name]` to launch `opencode` with `permission: allow` (approve-all / yolo mode).
 
 ## Project Structure
 
