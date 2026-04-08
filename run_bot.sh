@@ -1,7 +1,10 @@
 #!/bin/bash
-# Load environment variables from .env if it exists
+# Load environment variables from .env if it exists.
+# Using `source` preserves quoted values such as model names with spaces.
 if [ -f .env ]; then
-    export $(grep -v '^#' .env | xargs)
+    set -a
+    . ./.env
+    set +a
 fi
 
 if [ -z "$TELEGRAM_TOKEN" ]; then

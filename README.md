@@ -33,11 +33,13 @@ Create a `.env` file in the root:
 ```bash
 TELEGRAM_TOKEN=your_token_here
 OPENCODE_MODEL=openai/gpt-5.4
+OPENCODE_VARIANT=low
 OPENCODE_YOLO=false
 ```
 *Security Note*: Edit `telegram_agent.py` and set `ALLOWED_USER_ID` to the operator's Telegram ID.
 
 If `OPENCODE_MODEL` is omitted, the orchestrator defaults to `openai/gpt-5.4`.
+If `OPENCODE_VARIANT` is omitted, the orchestrator defaults to `low`.
 If `OPENCODE_YOLO=true`, newly auto-spawned sessions default to approve-all mode.
 
 ### 3. Installation

@@ -27,8 +27,10 @@ logging.getLogger("").addHandler(console)
 SESSION_NAME = "agent_session"
 ALLOWED_USER_ID = 6715827541  # Your ID
 DEFAULT_MODEL = os.environ.get("OPENCODE_MODEL", "openai/gpt-5.4")
+DEFAULT_VARIANT = os.environ.get("OPENCODE_VARIANT", "low")
 DEFAULT_YOLO = os.environ.get("OPENCODE_YOLO", "").lower() in {"1", "true", "yes", "on"}
 user_active_session = {}
+YOLO_PERMISSION_CONFIG = {"*": "allow"}
 
 
 def run_tmux(cmd):
@@ -42,7 +44,7 @@ def run_tmux(cmd):
 def opencode_command(
     continue_last: bool = False, session_id: str | None = None, fork: bool = False
 ) -> list[str]:
-    command = ["/root/.opencode/bin/opencode", "--model", DEFAULT_MODEL]
+    command = ["/root/.opencode/bin/opencode"]
     if session_id:
         command.extend(["--session", session_id])
     elif continue_last:
@@ -54,10 +56,7 @@ def opencode_command(
 
 def opencode_environment(yolo: bool = False) -> dict[str, str]:
     env = os.environ.copy()
-    if not yolo:
-        return env
-
-    config: dict[str, str] = {}
+    config: dict[str, object] = {}
     existing = env.get("OPENCODE_CONFIG_CONTENT")
     if existing:
         try:
@@ -67,7 +66,25 @@ def opencode_environment(yolo: bool = False) -> dict[str, str]:
         except json.JSONDecodeError:
             logging.warning("Ignoring invalid OPENCODE_CONFIG_CONTENT while enabling yolo mode.")
 
-    config["permission"] = "allow"
+    agent_config = config.get("agent")
+    if not isinstance(agent_config, dict):
+        agent_config = {}
+        config["agent"] = agent_config
+
+    build_config = agent_config.get("build")
+    if not isinstance(build_config, dict):
+        build_config = {}
+        agent_config["build"] = build_config
+
+    build_config["model"] = DEFAULT_MODEL
+    if DEFAULT_VARIANT:
+        build_config["variant"] = DEFAULT_VARIANT
+
+    if not yolo:
+        env["OPENCODE_CONFIG_CONTENT"] = json.dumps(config)
+        return env
+
+    config["permission"] = dict(YOLO_PERMISSION_CONFIG)
     env["OPENCODE_CONFIG_CONTENT"] = json.dumps(config)
     return env
 
